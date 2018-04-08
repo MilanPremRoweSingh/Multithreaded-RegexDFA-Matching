@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <iostream>
 #include <omp.h>
+#include <time.h>
 
 using namespace std;
 
@@ -57,6 +58,43 @@ void buildHardcodedDFA( vector<DFAState*>& outDFA ) //Builds DFA for ˆ(a+b+(c|d)
 
 int n;
 
+char *buildString( int size )
+{
+	int i;
+	char *s = (char *)malloc( sizeof( char )*( size ) );
+	if ( s == NULL )
+	{
+		printf( "\nOut of memory!\n" );
+		exit( 1 );
+	}
+	int max = size - 3;
+
+	/* seed the rnd generator (use a fixed number rather than the time for testing) */
+	srand( (unsigned int)time( NULL ) );
+
+	/* And build a long string that might actually match */
+	int j = 0;
+	while ( j<max )
+	{
+		s[j++] = 'a';
+		while ( rand() % 1000<997 && j<max )
+			s[j++] = 'a';
+		if ( j<max )
+			s[j++] = 'b';
+		while ( rand() % 1000<997 && j<max )
+			s[j++] = 'b';
+		if ( j<max )
+			s[j++] = ( rand() % 2 == 1 ) ? 'c' : 'd';
+		while ( rand() % 1000<997 && j<max )
+			s[j++] = ( rand() % 2 == 1 ) ? 'c' : 'd';
+	}
+	s[max] = 'a';
+	s[max + 1] = 'b';
+	s[max + 2] = ( rand() % 2 == 1 ) ? 'c' : 'd';
+	s[max + 3] = '\0';
+	return s;
+}
+
 int main( int argc, char* argv[] )
 {
 	if ( argc < 2 )
@@ -66,7 +104,8 @@ int main( int argc, char* argv[] )
 	}
 
 	n = atoi( argv[1] );
-	string strToMatch = "aaabbbcccddabccaabd"; //TEST
+	char* strcToMatch = buildString( 1000000 );
+	string strToMatch( strcToMatch );
 
 	vector<DFAState*> DFA;
 	buildHardcodedDFA( DFA );
@@ -99,13 +138,15 @@ int main( int argc, char* argv[] )
 	threadStates.resize( n );
 	for ( int i = 0; i < n; i++ )
 	{
-		threadStates.resize( DFA.size() - 1 ); // -1 because we dont consider the entry state for optimistic threads
+		threadStates[i].resize( DFA.size() - 1 ); // -1 because we dont consider the entry state for optimistic threads
 		for ( int j = 1; j < DFA.size(); j++ )
 		{
-			threadStates[i][j - 1] = DFA[i];
+			threadStates[i][j - 1] = DFA[j];
 		}
 	}
-//#pragma omp parallel for
+	time_t start = clock();
+
+#pragma omp parallel for 
 	for ( int i = 0; i <= n; i++ )
 	{
 		if ( i == 0 ) //Normal Thread
@@ -133,20 +174,50 @@ int main( int argc, char* argv[] )
 			string part = parts[i];
 			for ( int strIdx = 0; strIdx < part.length(); strIdx++ )
 			{
-				for ( int stateIdx = 0; stateIdx < threadStates[i].size(); stateIdx++ )
+				for ( int stateIdx = 0; stateIdx < threadStates[i-1].size(); stateIdx++ )
 				{
 					try
 					{
-						if( threadStates[i][stateIdx] != nullptr )
-							threadStates[i][stateIdx] = threadStates[i][stateIdx]->transitionsOut.at( part.at( strIdx ) );
+						if( threadStates[i-1][stateIdx] != nullptr )
+							threadStates[i-1][stateIdx] = threadStates[i-1][stateIdx]->transitionsOut.at( part.at( strIdx ) );
 					}
 					catch ( exception e )
 					{
-						threadStates[i][stateIdx] = nullptr;
+						threadStates[i-1][stateIdx] = nullptr;
 					}
 				}
 			}
 		}
+	}
+
+	for ( int i = 0; i < n; i++ )
+	{
+		if ( mainState == nullptr )
+		{	
+			cout << "No match found" << endl;
+			exit( 1 );
+		}
+
+		mainState = mainState->transitionsOut.at( parts[i+1].at( 0 ) );
+		if ( mainState->id == 0 )
+		{
+			cout << "No match found" << endl;
+			exit( 1 );
+		}
+
+		mainState = threadStates[i][mainState->id - 1];
+	}
+	time_t end = clock();
+
+	cout << difftime( end, start ) << std::endl;
+
+	if ( mainState != nullptr )
+	{
+		cout << "The generated string matches with the given regex" << endl;
+	}
+	else
+	{
+		cout << "The generated string doesnt match with the given regex" << endl;
 	}
 
 	system( "pause" ); //So we can see console output
